@@ -22,6 +22,71 @@ int is_transpose(int M, int N, int A[N][M], int B[M][N]);
 char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {
+    int a[8];
+    if(M==32){
+        for(int i=0;i<32;i+=8){
+            for(int j=0;j<32;j+=8){
+                for(int x=0;x<8;x++){
+                    for(int y=0;y<8;y++)a[y]=A[i+x][j+y];
+                    for(int y=0;y<8;y++)B[j+y][i+x]=a[y];
+                }
+            }
+        }   
+    }else if(M==64){
+        for(int i=0;i<64;i+=8){
+            for(int j=0;j<64;j+=4){
+                if((j/4)&1){
+                    if(i==j||j==i+4){
+                        for(int y=0;y<2;y++)a[y+2]=A[i+7][j+y];
+                        for(int y=0;y<2;y++)a[y+6]=A[i+7][j+y+2];
+                        for(int y=0;y<2;y++)B[j+y][i+6]=a[y];
+                        for(int y=0;y<2;y++)B[j+y+2][i+6]=a[y+4];
+                        for(int y=0;y<2;y++)B[j+y][i+7]=a[y+2];
+                        for(int y=0;y<2;y++)B[j+y+2][i+7]=a[y+6];
+                        for(int x=4;x>=0;x-=2){
+                            for(int y=0;y<4;y++)a[y]=A[i+x][j+y];
+                            for(int y=0;y<4;y++)a[y+4]=A[i+x+1][j+y];
+                            for(int y=0;y<4;y++)B[j+y][i+x]=a[y];
+                            for(int y=0;y<4;y++)B[j+y][i+x+1]=a[y+4];
+                        }   
+                    } else{
+                        for(int x=6;x>=2;x-=2){
+                            for(int y=0;y<4;y++)B[j+y][i+x]=A[i+x][j+y];
+                            for(int y=0;y<4;y++)B[j+y][i+x+1]=A[i+x+1][j+y];
+                        }
+                        for(int y=0;y<4;y++)B[j+y][i]=a[y];
+                        for(int y=0;y<4;y++)B[j+y][i+1]=a[y+4];
+                    }
+                }else{
+                    if(i==j||j==i+4){
+                        for(int x=0;x<6;x+=2){
+                            for(int y=0;y<4;y++)a[y]=A[i+x][j+y];
+                            for(int y=0;y<4;y++)a[y+4]=A[i+x+1][j+y];
+                            for(int y=0;y<4;y++)B[j+y][i+x]=a[y];
+                            for(int y=0;y<4;y++)B[j+y][i+x+1]=a[y+4];
+                        } 
+                        for(int y=0;y<4;y++)a[y]=A[i+6][j+y];
+                        for(int y=0;y<4;y++)a[y+4]=A[i+7][j+y];
+                        for(int y=0;y<2;y++)B[j+y][i+6]=a[y],a[y]=A[i+6][j+y+4];
+                        for(int y=0;y<2;y++)B[j+y][i+7]=a[y+4],a[y+4]=A[i+6][j+y+6];
+                        for(int y=2;y<4;y++)B[j+y][i+6]=a[y];
+                        for(int y=2;y<4;y++)B[j+y][i+7]=a[y+4];
+                    }else{
+                        for(int x=0;x<8;x+=2){
+                            if(x==0){
+                                for(int y=0;y<4;y++)a[y]=A[i+x][j+y+4];
+                                for(int y=0;y<4;y++)a[y+4]=A[i+x+1][j+y+4];
+                            }
+                            for(int y=0;y<4;y++)B[j+y][i+x]=A[i+x][j+y];
+                            for(int y=0;y<4;y++)B[j+y][i+x+1]=A[i+x+1][j+y];
+                        }
+                    }
+                }   
+            }
+        } 
+    }else{
+
+    }
 }
 
 /* 
