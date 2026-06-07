@@ -9,6 +9,7 @@
  */ 
 #include <stdio.h>
 #include "cachelab.h"
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 int is_transpose(int M, int N, int A[N][M], int B[M][N]);
 
@@ -85,7 +86,25 @@ void transpose_submit(int M, int N, int A[N][M], int B[M][N])
             }
         } 
     }else{
-
+        for(int i=0;i<67;i+=8){
+            for(int j=0;j<61;j+=8){
+                if(i==64&&j==56){
+                    for(int y=0;y<5;y++)a[y]=A[i][j+y];
+                    for(int y=0;y<3;y++)a[y+5]=A[i+1][j+y];
+                    for(int y=0;y<5;y++)B[j+y][i]=a[y];
+                    for(int y=0;y<3;y++)a[y]=a[y+5];
+                    for(int y=3;y<5;y++)a[y]=A[i+1][j+y];
+                    for(int y=0;y<5;y++)B[j+y][i+1]=a[y];
+                    for(int y=0;y<5;y++)a[y]=A[i+2][j+y];
+                    for(int y=0;y<5;y++)B[j+y][i+2]=a[y];
+                }else{
+                    for(int x=0;x<MIN(8,67-i);x++){
+                        for(int y=0;y<MIN(8,61-j);y++)a[y]=A[i+x][j+y];
+                        for(int y=0;y<MIN(8,61-j);y++)B[j+y][i+x]=a[y];
+                    }
+                }
+            }
+        } 
     }
 }
 
