@@ -57,12 +57,27 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char*)(bp)+GET_SIZE(((char*)(bp)-WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp)-GET_SIZE(((char*)(bp)-DSIZE)))
 
-char* heap_listp;
+static char* heap_listp;
+static void* fit_bp=NULL;
+
+static void mm_check(){
+    void* bp;
+    for(bp=heap_listp;GET_SIZE(HDRP(bp))>0;bp=NEXT_BLKP(bp)){
+        if((size_t)(NEXT_BLKP(bp)-(size_t)bp)!=GET_SIZE(HDRP(bp))){
+            printf("size not equal at %p,size=%d ,nextbp-bp=%d\n",bp,GET_SIZE(HDRP(bp)),(size_t)(NEXT_BLKP(bp)-(size_t)bp));
+            exit(0);
+        }else{
+            printf("correct bp=%p,size=%d\n",bp,GET_SIZE(HDRP(bp)));
+        }
+    }
+}
 
 static void* coalesce(void *bp){
     size_t prev_alloc=GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc=GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size=GET_SIZE(HDRP(bp));
+    size_t flag=0;
+    if(bp==fit_bp||PREV_BLKP(bp)==fit_bp||NEXT_BLKP(bp)==fit_bp)flag=1;
 
     if(prev_alloc&&next_alloc)return bp;
     else if(prev_alloc&&!next_alloc){
@@ -82,6 +97,7 @@ static void* coalesce(void *bp){
         PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
         bp=PREV_BLKP(bp);
     }
+    if(flag)fit_bp=bp;
     return bp;
 }
 
@@ -108,21 +124,43 @@ int mm_init(void)
     PUT(heap_listp+(2*WSIZE),PACK(DSIZE,1));
     PUT(heap_listp+(3*WSIZE),PACK(0,1));
     heap_listp+=(2*WSIZE);
+    fit_bp=heap_listp;
+    // printf("init=%p %p\n",fit_bp,heap_listp);
     if(extend_heap(CHUNKSIZE/WSIZE)==NULL)return -1;
     return 0;
 }
 
 static void* find_fit(size_t asize){
-    void *bp;
-    for(bp=heap_listp;GET_SIZE(HDRP(bp))>0;bp=NEXT_BLKP(bp)){
-        if(!GET_ALLOC(HDRP(bp))&&(asize<=GET_SIZE(HDRP(bp)))){
-            return bp;
+    // mm_check();
+    // printf("fuck=%d %d %d %p %p\n",asize,GET_SIZE(HDRP(fit_bp)),GET_SIZE(HDRP(NEXT_BLKP(fit_bp))),fit_bp,heap_listp);
+    // system("pause");
+    void* begin_bp=fit_bp;
+    // size_t times=0;
+    while(1){
+        // times++;
+        // if(times>=500)exit(0);
+        // printf("now=%p\n",fit_bp);
+        if(!GET_ALLOC(HDRP(fit_bp))&&(asize<=GET_SIZE(HDRP(fit_bp)))){
+            return fit_bp;
+        }
+        fit_bp=NEXT_BLKP(fit_bp);
+        if(GET_SIZE(HDRP(fit_bp))==0)fit_bp=heap_listp;
+        if(fit_bp==begin_bp){
+            break;
         }
     }
     return NULL;
+    // void *bp;
+    // for(bp=heap_listp;GET_SIZE(HDRP(bp))>0;bp=NEXT_BLKP(bp)){
+    //     if(!GET_ALLOC(HDRP(bp))&&(asize<=GET_SIZE(HDRP(bp)))){
+    //         return bp;
+    //     }
+    // }
+    // return NULL;
 }
 
 static void place(void *bp,size_t asize){
+    fit_bp=bp;
     size_t csize=GET_SIZE(HDRP(bp));
     if((csize-asize)>=(2*DSIZE)){
         PUT(HDRP(bp),PACK(asize,1));
@@ -149,15 +187,16 @@ void *mm_malloc(size_t size)
 
     if(size<=DSIZE)asize=2*DSIZE;
     else asize=DSIZE*((size+DSIZE+(DSIZE-1))/DSIZE);
-
+    // printf("malloc %d\n",asize);
     if((bp=find_fit(asize))!=NULL){
+        // printf("findfit=%p,heap=%p\n",bp,heap_listp);
         place(bp,asize);
         return bp;
     }
 
     extendsize=MAX(asize,CHUNKSIZE);
     if((bp=extend_heap(extendsize/WSIZE))==NULL)return NULL;
-    place(bp,asize);
+    place(bp,asize);fit_bp=bp;
     return bp;
 }
 
@@ -167,7 +206,7 @@ void *mm_malloc(size_t size)
 void mm_free(void *ptr)
 {
     size_t size=GET_SIZE(HDRP(ptr));
-
+    // printf("free at=%p,size=%d\n",ptr,size);
     PUT(HDRP(ptr),PACK(size,0));
     PUT(FTRP(ptr),PACK(size,0));
     coalesce(ptr);
@@ -216,6 +255,7 @@ void *mm_realloc(void *ptr, size_t size)
                 PUT(HDRP(ptr),PACK(size,1));
                 PUT(FTRP(ptr),PACK(size,1));
                 ptr=NEXT_BLKP(ptr);
+                if(nextptr==fit_bp)fit_bp=ptr;
                 PUT(HDRP(ptr),PACK(remain,0));
                 PUT(FTRP(ptr),PACK(remain,0));
             }else{
