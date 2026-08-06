@@ -59,6 +59,7 @@ team_t team = {
 
 static char* heap_listp;
 static void* fit_bp=NULL;
+static void* last_bp=NULL;
 
 static void mm_check(){
     void* bp;
@@ -83,6 +84,7 @@ static void mm_check(){
 }
 
 static void* coalesce(void *bp){
+    char *nextptr=NEXT_BLKP(bp);
     size_t prev_alloc=GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc=GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size=GET_SIZE(HDRP(bp));
@@ -94,11 +96,13 @@ static void* coalesce(void *bp){
         size+=GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0));
+        if(nextptr==last_bp)last_bp=bp;
     }
     else if(!prev_alloc&&next_alloc){
         size+=GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp),PACK(size,0));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+        if(last_bp==bp)last_bp=PREV_BLKP(bp);
         bp=PREV_BLKP(bp);
     }
     else{
@@ -106,6 +110,7 @@ static void* coalesce(void *bp){
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
         bp=PREV_BLKP(bp);
+        if(nextptr==last_bp)last_bp=bp;
     }
     if(flag)fit_bp=bp;
     return bp;
@@ -120,7 +125,7 @@ static void* extend_heap(size_t words){
     PUT(HDRP(bp),PACK(size,0));
     PUT(FTRP(bp),PACK(size,0));
     PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));
-    return coalesce(bp);
+    return last_bp=coalesce(bp);
 }
 
 /* 
@@ -137,6 +142,7 @@ int mm_init(void)
     fit_bp=heap_listp;
     // printf("init=%p %p\n",fit_bp,heap_listp);
     if(extend_heap(CHUNKSIZE/WSIZE)==NULL)return -1;
+    // printf("size=%d\n",GET_SIZE(HDRP(last_bp)));
     return 0;
 }
 
@@ -169,6 +175,7 @@ static void place(void *bp,size_t asize){
     if((csize-asize)>=(2*DSIZE)){
         PUT(HDRP(bp),PACK(asize,1));
         PUT(FTRP(bp),PACK(asize,1));
+        if(bp==last_bp)last_bp=NEXT_BLKP(bp);
         bp=NEXT_BLKP(bp);
         PUT(HDRP(bp),PACK(csize-asize,0));
         PUT(FTRP(bp),PACK(csize-asize,0));
@@ -200,6 +207,8 @@ void *mm_malloc(size_t size)
     }
 
     extendsize=MAX(asize,CHUNKSIZE);
+    if(GET_ALLOC(HDRP(last_bp))==0)extendsize-=GET_SIZE(HDRP(last_bp));
+    // printf("size1=%d\n",extendsize);
     if((bp=extend_heap(extendsize/WSIZE))==NULL)return NULL;
     place(bp,asize);fit_bp=bp;
     return bp;
@@ -217,6 +226,15 @@ void mm_free(void *ptr)
     coalesce(ptr);
 }
 
+void *place_new(void* oldptr,size_t copySize,size_t size){
+    char *newptr=mm_malloc(size);
+    if(newptr==NULL)return NULL;
+    memcpy(newptr,oldptr,copySize);
+    mm_free(oldptr);
+    // printf("val=%d %d %p %p\n",size,copySize,oldptr,newptr);
+    return newptr;
+}
+
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
@@ -229,9 +247,8 @@ void *mm_realloc(void *ptr, size_t size)
     }
     // mm_check();
     void *oldptr = ptr;
-    void *newptr;
     size_t copySize;
-    
+    size_t oldsize=size;
     
     copySize = GET_SIZE(HDRP(ptr))-DSIZE;
     // printf("size==%d %d\n",size,copySize);
@@ -252,72 +269,108 @@ void *mm_realloc(void *ptr, size_t size)
         void *nextptr=NEXT_BLKP(ptr);
         size_t nextsize=GET_SIZE(HDRP(nextptr));
         size_t nextalloc=GET_ALLOC(HDRP(nextptr));
-        if(nextsize+copySize+DSIZE>=ALIGN(size+8)&&nextalloc==0){
-            // printf("fuck=%p %p %d %d %d\n",nextptr,ptr,nextsize,copySize,ALIGN(size+8));
-            size=ALIGN(size+8);
-            size_t total=nextsize+copySize+DSIZE;
-            size_t remain=total-size; 
-            if(remain>=2*DSIZE){
-                PUT(HDRP(ptr),PACK(size,1));
-                PUT(FTRP(ptr),PACK(size,1));
-                ptr=NEXT_BLKP(ptr);
-                if(nextptr==fit_bp)fit_bp=ptr;
-                PUT(HDRP(ptr),PACK(remain,0));
-                PUT(FTRP(ptr),PACK(remain,0));
-            }else{
-                PUT(HDRP(ptr),PACK(total,1));
-                PUT(FTRP(ptr),PACK(total,1));
-                if(nextptr==fit_bp)fit_bp=ptr;
-            }
-            return oldptr;
-        }
         void* prevptr=PREV_BLKP(ptr);
         size_t prevsize=GET_SIZE(HDRP(prevptr));
         size_t prevalloc=GET_ALLOC(HDRP(prevptr));
-        if(prevsize+copySize+DSIZE>=ALIGN(size+8)&&prevalloc==0){
+        if(prevalloc&&nextalloc==0){
+            // printf("fuck=%p %p %d %d %d\n",nextptr,ptr,nextsize,copySize,ALIGN(size+8));
+            size=ALIGN(size+8);
+            size_t total=nextsize+copySize+DSIZE;
+            if(total>=size){
+                size_t remain=total-size; 
+                if(remain>=2*DSIZE){
+                    PUT(HDRP(ptr),PACK(size,1));
+                    PUT(FTRP(ptr),PACK(size,1));
+                    ptr=NEXT_BLKP(ptr);
+                    if(nextptr==fit_bp)fit_bp=ptr;
+                    if(nextptr==last_bp)last_bp=ptr;
+                    PUT(HDRP(ptr),PACK(remain,0));
+                    PUT(FTRP(ptr),PACK(remain,0));
+                }else{
+                    PUT(HDRP(ptr),PACK(total,1));
+                    PUT(FTRP(ptr),PACK(total,1));
+                    if(nextptr==fit_bp)fit_bp=ptr;
+                    if(nextptr==last_bp)last_bp=ptr;
+                }
+                return oldptr;
+            }else if(nextptr==last_bp){
+                extend_heap((size-total)/WSIZE);
+                PUT(HDRP(ptr),PACK(total,1));
+                PUT(FTRP(ptr),PACK(total,1));
+                if(nextptr==fit_bp)fit_bp=ptr;
+                last_bp=ptr;
+                return ptr;
+            }else{
+                return place_new(oldptr,copySize,oldsize);
+            }
+        }
+        if(nextalloc&&prevalloc==0){
             size=ALIGN(size+8);
             size_t total=prevsize+copySize+DSIZE;
-            size_t remain=total-size;
-            memmove(prevptr,ptr,copySize);
-            if(remain>=2*DSIZE){
-                PUT(HDRP(prevptr),PACK(size,1));
-                PUT(FTRP(prevptr),PACK(size,1));
-                ptr=NEXT_BLKP(prevptr);
-                if(oldptr==fit_bp)fit_bp=ptr;
-                PUT(HDRP(ptr),PACK(remain,0));
-                PUT(FTRP(ptr),PACK(remain,0));
-            }else{
+            if(total>=size){
+                size_t remain=total-size;
+                memmove(prevptr,ptr,copySize);
+                if(remain>=2*DSIZE){
+                    PUT(HDRP(prevptr),PACK(size,1));
+                    PUT(FTRP(prevptr),PACK(size,1));
+                    ptr=NEXT_BLKP(prevptr);
+                    if(oldptr==fit_bp)fit_bp=ptr;
+                    if(oldptr==last_bp)last_bp=ptr;
+                    PUT(HDRP(ptr),PACK(remain,0));
+                    PUT(FTRP(ptr),PACK(remain,0));
+                }else{
+                    PUT(HDRP(prevptr),PACK(total,1));
+                    PUT(FTRP(prevptr),PACK(total,1));
+                    if(oldptr==fit_bp)fit_bp=prevptr;
+                    if(oldptr==last_bp)last_bp=prevptr;
+                }
+                return prevptr;
+            }else if(oldptr==last_bp){
+                extend_heap((size-total)/WSIZE);
+                memmove(prevptr,ptr,copySize);
                 PUT(HDRP(prevptr),PACK(total,1));
                 PUT(FTRP(prevptr),PACK(total,1));
                 if(oldptr==fit_bp)fit_bp=prevptr;
+                last_bp=prevptr;
+                return prevptr;
+            }else{
+                return place_new(oldptr,copySize,oldsize);
             }
-            return prevptr;
         }
-        if(prevsize+copySize+DSIZE+nextsize>=ALIGN(size+8)&&prevalloc==0&&nextalloc==0){
+        if(prevalloc==0&&nextalloc==0){
             size=ALIGN(size+8);
             size_t total=prevsize+copySize+DSIZE+nextsize;
-            size_t remain=total-size;
-            memmove(prevptr,ptr,copySize);
-            if(remain>=2*DSIZE){
-                PUT(HDRP(prevptr),PACK(size,1));
-                PUT(FTRP(prevptr),PACK(size,1));
-                ptr=NEXT_BLKP(prevptr);
-                if(nextptr==fit_bp||oldptr==fit_bp)fit_bp=ptr;
-                PUT(HDRP(ptr),PACK(remain,0));
-                PUT(FTRP(ptr),PACK(remain,0));
-            }else{
+            if(total>=size){
+                size_t remain=total-size;
+                memmove(prevptr,ptr,copySize);
+                if(remain>=2*DSIZE){
+                    PUT(HDRP(prevptr),PACK(size,1));
+                    PUT(FTRP(prevptr),PACK(size,1));
+                    ptr=NEXT_BLKP(prevptr);
+                    if(nextptr==fit_bp||oldptr==fit_bp)fit_bp=ptr;
+                    if(nextptr==last_bp)last_bp=ptr;
+                    PUT(HDRP(ptr),PACK(remain,0));
+                    PUT(FTRP(ptr),PACK(remain,0));
+                }else{
+                    PUT(HDRP(prevptr),PACK(total,1));
+                    PUT(FTRP(prevptr),PACK(total,1));
+                    if(nextptr==fit_bp||oldptr==fit_bp)fit_bp=prevptr;
+                    if(nextptr==last_bp)last_bp=prevptr;
+                }
+                return prevptr;
+            }else if(nextptr==last_bp){
+                extend_heap((size-total)/WSIZE);
+                memmove(prevptr,ptr,copySize);
                 PUT(HDRP(prevptr),PACK(total,1));
                 PUT(FTRP(prevptr),PACK(total,1));
                 if(nextptr==fit_bp||oldptr==fit_bp)fit_bp=prevptr;
+                last_bp=prevptr;
+                return prevptr;
+            }else{
+                return place_new(oldptr,copySize,oldsize);
             }
-            return prevptr;
         }
-        newptr=mm_malloc(size);
-        if(newptr==NULL)return NULL;
-        memcpy(newptr,oldptr,copySize);
-        mm_free(oldptr);
-        // printf("val=%d %d %p %p\n",size,copySize,oldptr,newptr);
-        return newptr;
+        return place_new(oldptr,copySize,size);
     }
     return ptr;
 }
